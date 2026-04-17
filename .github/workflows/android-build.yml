@@ -1,0 +1,119 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Setup Gradle Wrapper
+      run: |
+        curl -L -o gradle/wrapper/gradle-wrapper.jar \
+          https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar
+
+    - name: Make gradlew executable
+      run: chmod +x gradlew
+
+    - name: Create google-services.json from secret
+      run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+
+    - name: Inject google_web_client_id into strings.xml
+      run: |
+        CLIENT_ID=$(cat app/google-services.json | python3 -c "
+        import json, sys
+        data = json.load(sys.stdin)
+        clients = data['client'][0]['oauth_client']
+        web = next(c for c in clients if c['client_type'] == 3)
+        print(web['client_id'])
+        ")
+        sed -i "s|YOUR_GOOGLE_WEB_CLIENT_ID|${CLIENT_ID}|g" \
+          app/src/main/res/values/strings.xml
+
+    - name: Inject API URL as environment variable
+      run: echo "TRANSCRIBE_API_URL=${{ secrets.TRANSCRIBE_API_URL }}" >> $GITHUB_ENV
+
+    - name: Decode Keystore
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/nadeem.jks
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --stacktrace
+      env:
+        TRANSCRIBE_API_URL: ${{ secrets.TRANSCRIBE_API_URL }}
+        DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 30
+
+    - name: Build Signed Release APK
+      run: ./gradlew assembleRelease --stacktrace
+      env:
+        TRANSCRIBE_API_URL: ${{ secrets.TRANSCRIBE_API_URL }}
+        DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+
+    - name: Upload Signed Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release-signed
+        path: app/build/outputs/apk/release/app-release.apk
+        retention-days: 30
+
+    - name: Run Unit Tests
+      run: ./gradlew test --stacktrace
+      continue-on-error: true
+
+    - name: Upload Test Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-reports
+        path: app/build/reports/tests/
+        retention-days: 30
+
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "## 📱 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+          SIZE=$(du -h app/build/outputs/apk/debug/app-debug.apk | cut -f1)
+          echo "✅ Debug APK: **$SIZE**" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+          SIZE=$(du -h app/build/outputs/apk/release/app-release.apk | cut -f1)
+          echo "✅ Release APK (Signed): **$SIZE**" >> $GITHUB_STEP_SUMMARY
+        fi
