@@ -4,13 +4,6 @@ plugins {
     id("com.google.gms.google-services")
 }
 
-// ✅ قراءة local.properties
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localProperties.load(new FileInputStream(localPropertiesFile))
-}
-
 android {
     namespace 'awab.quran.ar'
     compileSdk 34
@@ -19,18 +12,14 @@ android {
         applicationId "awab.quran.ar"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "TRANSCRIBE_API_URL", "\"${System.getenv('TRANSCRIBE_API_URL') ?: ''}\""
+        buildConfigField "String", "DEEPGRAM_API_KEY", "\"${System.getenv('DEEPGRAM_API_KEY') ?: ''}\""
         vectorDrawables {
             useSupportLibrary true
         }
-
-        // ✅ API URL يُقرأ من local.properties أو environment variable
-        def transcribeUrl = localProperties.getProperty("TRANSCRIBE_API_URL")
-            ?: System.getenv("TRANSCRIBE_API_URL")
-            ?: ""
-        buildConfigField "String", "TRANSCRIBE_API_URL", "\"${transcribeUrl}\""
     }
 
     signingConfigs {
@@ -61,7 +50,7 @@ android {
 
     buildFeatures {
         compose true
-        buildConfig true  // ✅ تفعيل BuildConfig
+        buildConfig true
     }
 
     composeOptions {
@@ -95,6 +84,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-storage-ktx'
 
     implementation 'androidx.datastore:datastore-preferences:1.0.0'
+    implementation 'androidx.work:work-runtime-ktx:2.9.0'
     implementation 'io.coil-kt:coil-compose:2.5.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 
